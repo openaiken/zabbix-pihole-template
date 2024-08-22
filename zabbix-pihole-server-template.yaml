@@ -1,0 +1,72 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: ac6a66b6c8b04e67b7928175fc744e79
+      name: Homelab
+  templates:
+    - uuid: 91a8db34eba240feb88359b5fcc75ed7
+      template: 'Pi-Hole Server'
+      name: 'Pi-Hole Server'
+      groups:
+        - name: Homelab
+      items:
+        - uuid: 6d31f2dcc3dd4938b8a8d8b1befa6528
+          name: 'Pi-Hole Status (JSON)'
+          type: DEPENDENT
+          key: piholeStatus-JSON
+          value_type: TEXT
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  const lines = value.split('\n');
+                      var result = {
+                          ftl_listening: false,
+                          protocols: [],
+                          pi_hole_blocking: false
+                      };
+                  
+                      for (var i = 0; i < lines.length; i++) {
+                          var line = lines[i];
+                          var match = line.match(/\[([✓✗])\] (.+)/);
+                          if (match) {
+                              var status = match[1] === '✓';
+                              var description = match[2].trim();
+                  
+                              if (description.includes("FTL is listening on port 53")) {
+                                  result.ftl_listening = status;
+                              } else if (description.startsWith("UDP") || description.startsWith("TCP")) {
+                                  result.protocols.push({
+                                      protocol: description.replace(/[()]/g, '').replace(/\s+/g, '_').toLowerCase(),
+                                      status: status
+                                  });
+                              } else if (description.includes("Pi-hole blocking is enabled")) {
+                                  result.pi_hole_blocking = status;
+                              }
+                          }
+                      }
+                  
+                      return JSON.stringify(result, null, 2); // Pretty-printing with 2-space indentation
+                  }
+          master_item:
+            key: 'system.run[/usr/local/bin/pihole status]'
+          triggers:
+            - uuid: 75f4beef88c74143aa44a39de5f808ff
+              expression: 'jsonpath(last(/Pi-Hole Server/piholeStatus-JSON),"$.pi_hole_blocking")<>"true"'
+              name: 'Pi-Hole not Blocking Queries'
+              priority: WARNING
+              manual_close: 'YES'
+            - uuid: d9369c1630084396b2362f14f1b41f34
+              expression: 'jsonpath(last(/Pi-Hole Server/piholeStatus-JSON),"$.ftl_listening")<>"true"'
+              name: 'Pi-Hole not Listening to DNS'
+              priority: HIGH
+              manual_close: 'YES'
+        - uuid: 3ec1aa9db2b643b2bd7e2371a00df900
+          name: 'Pi-Hole Status (raw)'
+          key: 'system.run[/usr/local/bin/pihole status]'
+          delay: 5m
+          value_type: TEXT
